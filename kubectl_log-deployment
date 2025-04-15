@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+if [ "$#" -eq 0 ]; then
+    echo "Usage: kubectl log-deployment <deployment1> [<deployment2> ...] [--jq]"
+    return 1
+fi
+
+use_jq=0
+deployments=()
+pids=()
+
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --jq)
+            echo "Using jq to format logs"
+            use_jq=1
+            ;;
+        *)
+            deployments+=("$1")
+            ;;
+    esac
+    shift
+done
+
+trap 'echo "🛑 Stopping log tails..."; kill "${pids[@]}" 2>/dev/null' EXIT
+
+for deployment in "${deployments[@]}"; do
+    echo "🔍 Fetching pods for deployment: $deployment"
+
+    pods=$(kubectl get pods --selector=app="$deployment" -o jsonpath='{.items[*].metadata.name}')
+
+    if [ -z "$pods" ]; then
+        echo "No pods found for deployment: $deployment"
+        continue
+    fi
+
+    for pod in $pods; do
+        echo "🪵  Tailing logs from pod: $pod"
+        if [ "$use_jq" -eq 1 ]; then
+            (kubectl logs -f pod/"$pod" | jq | sed "s/^/[$pod] /") &
+        else
+            (kubectl logs -f pod/"$pod" | sed "s/^/[$pod] /") &
+        fi
+        pids+=("$!")
+    done
+done
+
+wait
+
